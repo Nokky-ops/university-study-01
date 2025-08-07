@@ -1,0 +1,269 @@
+#include "Arduino.h"
+#include "avr/io.h"
+#include "Servo.h"
+//==================================================================
+//探査プログラム
+//==================================================================
+#define  P1_pin  7  //フォトセンサVp0のピン番号
+#define  P2_pin  8  //フォトセンサVp1のピン番号
+#define  P3_pin  9  //フォトセンサVp2のピン番号
+#define  Trig_pin  12  //測距離センサのトリガーピン番号
+#define  Echo_pin  13  //測距離センサのエコーピン番号
+#define Buzzer_DA2  4   //ブザーDA2のピン番号
+#define M1_IN1   3  //右モータ制御ピン１
+#define M1_IN2   5  //右モータ制御ピン２
+#define M2_IN1   6  //左モータ制御ピン１
+#define M2_IN2   11  //左モータ制御ピン２
+
+int a1 = 0;
+int a2 = 0;
+int i = 0;
+int f = 0;
+long int L1_val=0;//距離変数
+unsigned long time_high =0;//距離測定用
+unsigned long time_low =0;//距離測定用
+unsigned long int P1_val;   //フォトセンサ信号の値
+unsigned long int P2_val;   //フォトセンサ信号の値
+unsigned long int P3_val;   //フォトセンサ信号の値
+
+Servo myservo; //Servoオブジェクトの宣言
+//==================================================================
+//以下関数宣言
+int len(){//距離計測関数
+  // 距離計測 ///
+    PORTB &=~_BV(4);      //Trigピン（12pin）を2uS間Lowレベル設定
+    delayMicroseconds(2);
+    PORTB |= _BV(4);      //Trigピンを10uS間Highレベル設定
+    delayMicroseconds(10); 
+    PORTB &=~_BV(4);
+
+//Echo_pinがHighレベルになり計測開始，Lowに戻るまでの時間計測を行う。
+  while (digitalRead(13) == LOW) {} //EchoピンがLOWの間は空実行（そのまま何もしない）
+          time_high = micros();               //EchoピンがHIGH状態の時間取得
+  while (digitalRead(13)==HIGH){ }
+          time_low =micros();                //EchoピンがLOW状態の時間取得
+  
+  L1_val = (time_low-time_high) / 58.5; //物体との距離を求める
+     
+    return L1_val;
+}
+
+void servo(int angle){//サーボ動作関数（角度指定最速）
+  int angle_val=myservo.read()-angle;
+  if(angle_val<0)angle_val=angle_val*-1;
+  myservo.write(angle);
+  delay(angle_val*1.67);
+}
+
+void motor(int Rf,int Rb,int Lf,int Lb){//モーター動作関数
+  analogWrite( M1_IN1, Rf ); //M1_IN1を速度設定(右前進)
+  analogWrite( M1_IN2, Rb ); //M1_IN2を速度設定(右後退)
+  analogWrite( M2_IN1, Lf ); //M1_IN1を速度設定(左前進)
+  analogWrite( M2_IN2, Lb ); //M1_IN2を速度設定(左後退)
+}
+
+void brake(){//長時間のブレーキ動作関数
+  PORTD |= _BV(3);  //M1_IN1をHighレベル設定
+  PORTD |= _BV(5);  //M1_IN2をHighレベル設定
+  PORTD |= _BV(6);  //M2_IN1をHighレベル設定
+  PORTD |= _BV(11);  //M2_IN2をHighレベル設定
+  delay(10);
+  analogWrite( M1_IN1, 255 ); //M1_IN1を速度255設定
+  analogWrite( M1_IN2, 255 ); //M1_IN2を速度255設定
+  analogWrite( M2_IN1, 255 ); //M2_IN1を速度255設定
+  analogWrite( M2_IN2, 255 ); //M2_IN2を速度255設定
+}
+
+//関数一覧
+//length=len();//でlengthに距離を取得
+//servo(角度);//でサーボ動作(0~180度)
+//P1_val = digitalRead(P1_pin);//でP1_valにフォトセンサ１の値を取得
+//motor(左前進,左後退,右前進,右後方,時間);でモーター動作
+//brake();で停止
+//tone( Buzzer_DA2,数値,時間);で音を鳴らす後にdelayで同じ時間待つこと
+//ド131ド#139レ147レ#156ミ165ファ175ファ#185ソ196ソ#208ラ220ラ#233シ247
+//ド262ド#277レ294レ#294ミ330ファ349ファ#370ソ392ソ#415ラ440ラ#466シ494
+//ド523ド#554レ587レ#622ミ659ファ698ファ#740ソ784ソ#831ラ880ラ#932シ988
+//noTone(Buzzer_DA2);で音を止める
+
+//Serial.print("\n""数値名=""\t");  // シリアルモニタへ表示
+//Serial.println(数値);    // シリアルモニタへ表示
+//==================================================================
+
+//セットアップでピン番号に注意すること
+void setup() {
+  Serial.begin(9600);  //シリアルモニタ開始（速度9600bps）
+  
+  DDRD = DDRD | B01111000;  //フォトセンサピン（D7,D8,D9を入力ポート設定）モーターピン M2_IN1 IN2 M1_IN1を出力ポート設定
+  DDRB = DDRB | B00011000;  //距離トリガーピン（Ｄ１２を出力ポート設定）モーターピン （M1_IN2を出力ポート設定）
+
+  myservo.attach(10,800,2200);//１０ピンをサーボに割り当てる
+  myservo.write(90);//９０度を正面とする
+  
+  P1_val = 0;
+  P2_val = 0;
+  P3_val = 0;
+}
+
+//本文開始
+void loop() {
+  
+  if(digitalRead(P1_pin)==1){//前方が走行可能でない
+      brake();
+      f = 0;
+      for(i=36;i>=0;i--){//距離センサで目標探査
+        servo(i*5);
+        if(len()<14){
+          if(i<10){
+            if(digitalRead(P3_pin)==0)motor(50,0,70,0);
+            while(digitalRead(P3_pin)==0)delay(1);
+            brake();
+          }
+          if(i>34){
+            if(digitalRead(P3_pin)==0)motor(70,0,50,0);
+            while(digitalRead(P3_pin)==0)delay(1);
+            brake();
+          }
+          
+          //警報待機２秒
+          tone( Buzzer_DA2,300,1800);
+          delay(1800);
+          tone( Buzzer_DA2,600,200);
+          delay(200);
+          f=1;
+        }
+        if(f==1)break;
+      }
+      if(i==-1){//前回の成功判定1は失敗
+        a2=a1;
+        a1=1;
+      }else{
+        a2=a1;
+        a1=0;
+      }
+      //回避行動
+      motor(0,135,0,100);
+      delay(600);
+      servo(0);
+      motor(0,60,60,0);
+      for(i=0;i<=100;i++){//ぶつかるなら停止
+        if(len()<10){
+          brake();
+          break;
+        }
+      }
+      if(i!=101){
+        motor(0,100,0,80);
+        delay(200);
+        motor(0,100,100,0);
+        delay(100);
+      }
+      if(a1==1&&a2==1){//２回連続失敗の時回転を調整
+        tone( Buzzer_DA2,900,100);
+        motor(0,100,100,0);
+        delay(100);
+      }
+      brake();
+  }else if(digitalRead(P3_pin)==1){
+      brake();
+      f = 0;
+      servo(0);
+      for(i=0;i<=21;i++){//距離センサで目標探査
+        servo(i*5);
+        if(len()<10){
+          //警報待機２秒
+          tone( Buzzer_DA2,300,1600);
+          delay(1600);
+          tone( Buzzer_DA2,600,100);
+          delay(200);
+          tone( Buzzer_DA2,600,200);
+          delay(200);
+          f=1;
+        }
+        if(f==1)break;
+      }
+      if(i==19){//前回の成功判定1は失敗
+        a2=a1;
+        a1=1;
+      }else{
+        a2=a1;
+        a1=0;
+      }
+      //回避行動
+      motor(0,140,0,100);
+      delay(600);
+      motor(0,60,60,0);
+      for(i=0;i<=100;i++){//ぶつかるなら停止
+        if(len()<10){
+          brake();
+          break;
+        }
+      }
+      if(i!=101){
+        motor(0,100,0,80);
+        delay(200);
+        motor(0,100,100,0);
+        delay(100);
+      }
+      if(a1==1&&a2==1){//２回連続失敗の時回転を調整
+        tone( Buzzer_DA2,900,100);
+        motor(0,100,100,0);
+        delay(100);
+      }
+      brake();
+  }else if(digitalRead(P2_pin)==1){
+      brake();
+      f = 0;
+      servo(120);
+      for(i=24;i<=36;i++){//距離センサで目標探査
+        servo(i*5);
+        if(len()<10){
+          //警報待機２秒
+          tone( Buzzer_DA2,300,1400);
+          delay(1400);
+          tone( Buzzer_DA2,600,100);
+          delay(200);
+          tone( Buzzer_DA2,600,100);
+          delay(200);
+          tone( Buzzer_DA2,600,200);
+          delay(200);
+          f=1;
+        }
+        if(f==1)break;
+      }
+      if(i==37){//前回の成功判定1は失敗
+        a2=a1;
+        a1=1;
+      }else{
+        a2=a1;
+        a1=0;
+      }
+      //回避行動
+      motor(0,140,0,100);
+      delay(600);
+      motor(0,60,60,0);
+      for(i=0;i<=115;i++){//ぶつかるなら停止
+        if(len()<10){
+          brake();
+          break;
+        }
+      }
+      if(i!=116){
+        motor(0,120,0,80);
+        delay(200);
+        motor(0,100,100,0);
+        delay(100);
+        
+      }
+      if(a1==1&&a2==1){//２回連続失敗の時回転を調整
+        tone( Buzzer_DA2,900,100);
+        motor(0,100,100,0);
+        delay(100);
+      }
+      brake();
+  }else{
+        //左旋回しながら前進（端を目指す動作と兼ねる）
+        motor(80,0,55,0);//要調整
+  }
+  
+}
